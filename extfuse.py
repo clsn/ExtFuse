@@ -6,7 +6,10 @@ import path
 import sys
 import stat
 import errno
-import sqlite
+try:
+    import sqlite
+except ImportError:
+    import sqlite3 as sqlite
 
 def debugfunc(f):
     def newf(*args, **kwargs):
@@ -18,6 +21,10 @@ def debugfunc(f):
         ExtFuse.dbg.flush()
         return x
     return newf
+
+def mod(self):
+    return "(stat mode={0})".format(self.st_mode)
+Stat.__str__=mod
 
 def escape_for_sql(string):
     x=string
@@ -128,9 +135,21 @@ class ExtFuse(Fuse):
         if self.is_root(pathelts=pe):
             return st
         if len(pe)<3:          # ext dir
-            query="SELECT COUNT(*) FROM files WHERE ext='{0}';".format(escape_for_sql(pe[0]))
-            self.cursor.execute(query)
-            if self.cursor.fetchone()[0]<1:
+            query="SELECT COUNT(*) FROM files WHERE ext='{0}';".format(escape_for_sql(pe[-1]))
+            try:
+                self.DBG(query)
+                self.DBG("EJIIOFHSDKDH")
+                cc=sqlite.connect("EXTFS.db").cursor()
+                rv=cc.execute(query)
+                self.DBG("AAAAAAAA")
+                self.DBG("exec returned {0}".format(str(rv)))
+                cnt=cc.fetchone()
+                self.DBG("Returned {0}".format(str(cnt)))
+            except Exception as e:
+                self.DBG("Whoa, except: {0}".format(str(e)))
+                cnt=[0]
+            if cnt[0]<1:
+                self.DBG("Nothing returned, ENOENT")
                 return -fuse.ENOENT
             return st
         else:
@@ -144,17 +163,20 @@ class ExtFuse(Fuse):
         dirents=['.', '..']
         pe=getParts(path)[1:]
         self.DBG("readdir pe: "+str(pe))
-        if not pe:
+        if self.is_root(path=path):
             # Return extension directories
             query="SELECT DISTINCT ext FROM files;"
+            self.DBG(query)
             self.cursor.execute(query)
             l=self.cursor.fetchall()
             dirents.extend([x[0] for x in l])
             self.DBG("readdir returning {0}".format(str(dirents)))
             for r in dirents:
+                self.DBG("readdir yielding {0}".format(str(r)))
                 yield fuse.Direntry(r)
         elif len(pe)==1:
             query="SELECT newname FROM files WHERE ext='{0}';".format(escape_for_sql(pe[0]))
+            self.DBG(query)
             self.cursor.execute(query)
             l=self.cursor.fetchone()
             while l:
