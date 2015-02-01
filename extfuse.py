@@ -28,6 +28,8 @@ Stat.__str__=mod
 
 def escape_for_sql(string):
     x=string
+    if isinstance(string,unicode):
+        x=string.encode('utf-8')
     x=x.replace("'","''")
     return x
 
@@ -80,15 +82,18 @@ class ExtFuse(Fuse):
         if self.already:
             return
         self.already=True
-        # self.dbfile=os.tmpnam()
-        self.dbfile="/home/mark/EXTFS.db"
-        try:
-            os.unlink(self.dbfile)
-        except OSError:
-            pass
+        self.DBG('First time for everything')
         self.multithreaded=False # THIS can make it work!
+        # self.dbfile=os.tmpnam()
+        if self.scan != 'n':
+            try:
+                os.unlink(self.dbfile)
+            except OSError:
+                pass
         self.connection=sqlite.connect(self.dbfile)
         self.cursor=self.connection.cursor()
+        if self.scan == 'n':
+            return
         self.cursor.execute(self.tablecommand)
         for cmd in self.indexcommands:
             self.cursor.execute(cmd)
@@ -96,30 +101,31 @@ class ExtFuse(Fuse):
         count=0
         w=self.pathobj.walkfiles()
         for fil in w:
+            self.DBG("-- walking: {0}".format(fil))
             direc, name = fil.rsplit(os.path.sep,1)
             base, ext = os.path.splitext(name)
-            # self.DBG("Base({0}), Ext({1})".format(base,ext))
-            base=base.replace('\\', '\\\\')
-            base=base.replace("'", "\\'")
-            ext=ext.replace('\\', '\\\\')
-            ext=ext.replace("'", "\\'")
+            base=escape_for_sql(base)
+            ext=escape_for_sql(ext)
+            fil=escape_for_sql(fil)
             if not ext:
-                ext='._'
+                ext='._.'       # Can't possibly be real.
             ext=ext[1:]
             cmd=self.insertcommand.format(count, fil, base, ext)
-            print cmd;
+            # print cmd;
             rv=self.cursor.execute(cmd)
             count+=1
-        self.connection.commit()
-        self.connection.close() # ?
-        self.connection=sqlite.connect(self.dbfile)
-        self.cursor=self.connection.cursor()
-#        self.cursor.execute("SELECT * FROM files;")
-#        for l in self.cursor:
-#            print str(l)
+            if hasattr(server, 'verbose') and not count%1000:
+                print "... "+str(count)
+        if hasattr(self,'debug'):
+            self.cursor.execute("SELECT * FROM files;")
+            for l in self.cursor:
+                print str(l)
 
     @debugfunc
     def fsdestroy(self):
+        self.cursor.execute("SELECT COUNT(*) from files;")
+        l=self.cursor.fetchone()
+        self.DBG("Closing with {0}".format(l))
         self.cursor.close()
         self.connection.close()
 
@@ -159,12 +165,8 @@ class ExtFuse(Fuse):
             query="SELECT COUNT(*) FROM files WHERE ext='{0}';".format(escape_for_sql(pe[-1]))
             try:
                 self.DBG(query)
-                self.DBG("EJIIOFHSDKDH")
-                rv=self.cursor.execute(query)
-                self.DBG("AAAAAAAA")
-                self.DBG("exec returned {0}".format(str(rv)))
+                self.cursor.execute(query)
                 cnt=self.cursor.fetchone()
-                self.DBG("Returned {0}".format(str(cnt)))
             except Exception as e:
                 self.DBG("Whoa, except: {0}".format(str(e)))
                 cnt=[0]
@@ -176,9 +178,8 @@ class ExtFuse(Fuse):
             # st.st_mode=stat.S_IFREG | 0444
             st.st_mode=stat.S_IFLNK | 0777
             st.st_nlink=1
-            st.st_size=0        # XXXXXXX
+            st.st_size=0
         return st
-
 
     @debugfunc
     def readlink(self, filename):
@@ -194,7 +195,7 @@ class ExtFuse(Fuse):
         path=self.cursor.fetchone()
         if not path or not path[0]:
             return -fuse.ENOENT
-        return str(path[0])
+        return str(path[0].encode('utf-8'))
 
     def getattr(self, *args, **kwargs):
         try:
@@ -219,7 +220,7 @@ class ExtFuse(Fuse):
             for r in dirents:
                 self.DBG("readdir yielding {0}".format(str(r)))
                 try:
-                    yield fuse.Direntry(str(r))
+                    yield fuse.Direntry(r.encode('utf-8'))
                 except Exception as e:
                     self.DBG("Whoa, exception {0}".format(str(e)))
         elif len(pe)==1:
@@ -229,7 +230,7 @@ class ExtFuse(Fuse):
             l=self.cursor.fetchone()
             while l:
                 self.DBG("File: {0}".format(str(l)))
-                yield fuse.Direntry(str(l[0]))
+                yield fuse.Direntry(l[0].encode('utf-8'))
                 l=self.cursor.fetchone()
         else:
             raise StopIteration
@@ -279,18 +280,26 @@ class ExtFuse(Fuse):
 
 server=ExtFuse(version="%prog "+fuse.__version__,
                usage='', dash_s_do='setsingle')
-server.parser.add_option(mountopt='path', default='.')
+server.path=os.getenv('PWD')
+server.dbfile=os.getenv('HOME')+'/EXTFS.db'
+server.scan='y'
+server.parser.add_option(mountopt='path')
+server.parser.add_option(mountopt='dbfile')
+server.parser.add_option(mountopt='scan')
+server.parser.add_option(mountopt='verbose')
+server.parser.add_option(mountopt='debug')
 server.parse(errex=1, values=server)
 try:
     server.fsinit()
 except Exception as e:
     print str(e)
 
-crs=server.connection.cursor()
-crs.execute("SELECT * FROM files;")
-l=crs.fetchone()
-while (l):
-    print str(l)
-    l=crs.fetchone()
+# crs=server.connection.cursor()
+# crs.execute("SELECT * FROM files;")
+# l=crs.fetchone()
+# while (l):
+#     print str(l)
+#     l=crs.fetchone()
 
+print "Ready."
 server.main()
