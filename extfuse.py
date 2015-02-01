@@ -69,8 +69,11 @@ class ExtFuse(Fuse):
     insertcommand="""INSERT INTO files VALUES ({0}, '{1}', '{2}_{0}', '{3}');"""
 
     def DBG(self, s):
-        self.dbg.write(s+"\n")
-        self.dbg.flush()
+        try:
+            self.dbg.write(s+"\n")
+            self.dbg.flush()
+        except Exception as e:
+            pass
 
     def __init__(self, *args, **kw):
         Fuse.__init__(self, *args, **kw)
@@ -99,9 +102,10 @@ class ExtFuse(Fuse):
             self.cursor.execute(cmd)
         self.pathobj=path.path(self.path)
         count=0
-        w=self.pathobj.walkfiles()
+        w=self.pathobj.walkfiles(errors='warn')
         for fil in w:
-            self.DBG("-- walking: {0}".format(fil))
+            if hasattr(self,'debug'):
+                self.DBG("-- walking: {0}".format(fil))
             direc, name = fil.rsplit(os.path.sep,1)
             base, ext = os.path.splitext(name)
             base=escape_for_sql(base)
@@ -116,10 +120,11 @@ class ExtFuse(Fuse):
             count+=1
             if hasattr(server, 'verbose') and not count%1000:
                 print "... "+str(count)
+        self.connection.commit()
         if hasattr(self,'debug'):
             self.cursor.execute("SELECT * FROM files;")
             for l in self.cursor:
-                print str(l)
+                print repr(l)
 
     @debugfunc
     def fsdestroy(self):
@@ -220,6 +225,10 @@ class ExtFuse(Fuse):
             for r in dirents:
                 self.DBG("readdir yielding {0}".format(str(r)))
                 try:
+                    if not r:
+                        # Should never be empty string, but...
+                        # yield fuse.Direntry('?.ERROR')
+                        continue
                     yield fuse.Direntry(r.encode('utf-8'))
                 except Exception as e:
                     self.DBG("Whoa, exception {0}".format(str(e)))
@@ -289,10 +298,10 @@ server.parser.add_option(mountopt='scan')
 server.parser.add_option(mountopt='verbose')
 server.parser.add_option(mountopt='debug')
 server.parse(errex=1, values=server)
-try:
-    server.fsinit()
-except Exception as e:
-    print str(e)
+#try:
+server.fsinit()
+#except Exception as e:
+#    print str(e)
 
 # crs=server.connection.cursor()
 # crs.execute("SELECT * FROM files;")
