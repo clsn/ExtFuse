@@ -111,7 +111,7 @@ class ExtFuse(Fuse):
             base=escape_for_sql(base)
             ext=escape_for_sql(ext)
             fil=escape_for_sql(fil)
-            if not ext:
+            if not ext or len(ext)<2:
                 ext='._.'       # Can't possibly be real.
             ext=ext[1:]
             cmd=self.insertcommand.format(count, fil, base, ext)
@@ -189,6 +189,10 @@ class ExtFuse(Fuse):
     @debugfunc
     def readlink(self, filename):
         base, uniq=filename.rsplit('_',1)
+        try:
+            uniq, ext=uniq.rsplit('.',1)
+        except Exception:       # ?
+            pass
         if not uniq:
             return -fuse.ENOENT
         try:
@@ -238,8 +242,11 @@ class ExtFuse(Fuse):
             self.cursor.execute(query)
             l=self.cursor.fetchone()
             while l:
-                self.DBG("File: {0}".format(str(l)))
-                yield fuse.Direntry(l[0].encode('utf-8'))
+		try:
+                   self.DBG("File: {0}".format(str(l)))
+                   yield fuse.Direntry("{0}.{1}".format(l[0],pe[0]))
+		except Exception as e:
+		    self.DBG("Whoa, exception: {0}".format(str(e)))
                 l=self.cursor.fetchone()
         else:
             raise StopIteration
