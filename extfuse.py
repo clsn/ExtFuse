@@ -188,7 +188,10 @@ class ExtFuse(Fuse):
 
     @debugfunc
     def readlink(self, filename):
-        base, uniq=filename.rsplit('_',1)
+        if filename.endswith('._.'):
+            base,uniq,dmy=filename.rsplit('_',2)
+        else:
+            base, uniq=filename.rsplit('_',1)
         try:
             uniq, ext=uniq.rsplit('.',1)
         except Exception:       # ?
