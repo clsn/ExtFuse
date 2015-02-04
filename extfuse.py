@@ -6,6 +6,7 @@ import path
 import sys
 import stat
 import errno
+import tempfile
 try:
     import sqlite
 except ImportError:
@@ -13,18 +14,12 @@ except ImportError:
 
 def debugfunc(f):
     def newf(*args, **kwargs):
-        ExtFuse.dbg.write(">>entering function %s(%s)\n"%(f.__name__, str(args)))
-        ExtFuse.dbg.flush()
+        ExtFuse.DBG(">>entering function %s(%s)"%(f.__name__, str(args)))
         x=f(*args, **kwargs)
-        ExtFuse.dbg.write("<<leaving function %s, returning %s\n"%
-                          (f.__name__, str(x)))
-        ExtFuse.dbg.flush()
+        ExtFuse.DBG("<<leaving function %s, returning %s"%
+                    (f.__name__, str(x)))
         return x
     return newf
-
-def mod(self):
-    return "(stat mode={0})".format(self.st_mode)
-Stat.__str__=mod
 
 def escape_for_sql(string):
     x=string
@@ -33,19 +28,7 @@ def escape_for_sql(string):
     x=x.replace("'","''")
     return x
 
-def unescape_from_sql(string):
-    return string.replace("''","'")
-
 fuse.fuse_python_api=(0,2)
-
-def getDepth(path):
-    """
-    Return the depth of a given path, zero-based from root ('/')
-    """
-    if path == os.sep:
-        return 0
-    else:
-        return path.count(os.sep)
 
 def getParts(path):
     """
@@ -59,6 +42,7 @@ def getParts(path):
 class ExtFuse(Fuse):
 
     dbg=open("DBG","w")
+    DEBUG=True
 
     tablecommand="""CREATE TABLE files (_id int primary key,
 	fullpath varchar(1000) UNIQUE,
@@ -68,35 +52,21 @@ class ExtFuse(Fuse):
                    """CREATE INDEX Names ON files (newname);"""]
     insertcommand="""INSERT INTO files VALUES ({0}, '{1}', '{2}_{0}', '{3}');"""
 
-    def DBG(self, s):
+    @classmethod
+    def DBG(cls, s):
+        if not cls.DEBUG:
+            return
         try:
-            self.dbg.write(s+"\n")
-            self.dbg.flush()
+            cls.dbg.write(s+"\n")
+            cls.dbg.flush()
         except Exception as e:
             pass
 
     def __init__(self, *args, **kw):
         Fuse.__init__(self, *args, **kw)
 
-    already=False
     @debugfunc
-    def fsinit(self):
-        # Idempotent!
-        if self.already:
-            return
-        self.already=True
-        self.DBG('First time for everything')
-        self.multithreaded=False # THIS can make it work!
-        # self.dbfile=os.tmpnam()
-        if self.scan != 'n':
-            try:
-                os.unlink(self.dbfile)
-            except OSError:
-                pass
-        self.connection=sqlite.connect(self.dbfile)
-        self.cursor=self.connection.cursor()
-        if self.scan == 'n':
-            return
+    def scanfs(self):
         self.cursor.execute(self.tablecommand)
         for cmd in self.indexcommands:
             self.cursor.execute(cmd)
@@ -125,20 +95,60 @@ class ExtFuse(Fuse):
             self.cursor.execute("SELECT * FROM files;")
             for l in self.cursor:
                 print repr(l)
+        return
+
+    already=False
+    @debugfunc
+    def fsinit(self):
+        # Idempotent!
+        if self.already:
+            return
+        self.already=True
+        self.multithreaded=False # THIS can make it work!
+        try:                     # if dbfile is a dir, make a temp file there.
+            st=None
+            if self.dbfile:
+                st=os.stat(self.dbfile)
+            if not st or st.st_mode & stat.S_IFDIR:
+                # os.tempnam gives warnings...
+                fd, self.dbfile=tempfile.mkstemp(suffix='.db',
+                                                 prefix="ExtFs",
+                                                 dir=self.dbfile)
+                os.close(fd)    # Don't need this.
+        except OSError:
+            pass
+        if not hasattr(self,'noscan'):
+            try:
+                os.unlink(self.dbfile)
+            except OSError:
+                pass
+        try:
+            self.connection=sqlite.connect(self.dbfile)
+        except sqlite.OperationalError as e:
+            print "Error: %s"%str(e)
+            exit(50)            # ?
+        self.DBG("Opened db file %s"%self.dbfile)
+        self.cursor=self.connection.cursor()
+        if hasattr(self,'noscan'):
+            return
+        else:
+            self.scanfs()
 
     @debugfunc
     def fsdestroy(self):
-        self.cursor.execute("SELECT COUNT(*) from files;")
-        l=self.cursor.fetchone()
-        self.DBG("Closing with {0}".format(l))
         self.cursor.close()
         self.connection.close()
+        if not hasattr(self, 'noclean'):
+            try:
+                os.unlink(self.dbfile)
+            except Exception:
+                pass
+        return
 
     @debugfunc
     def is_root(self, path=None, pathelts=None):
         if pathelts is None:
             pathelts=getParts(path)[1:]
-        self.DBG("is_root ({0}), ({1})".format(str(path), str(pathelts)))
         return (path==os.sep or len(pathelts)==0 or
                 pathelts == ['/'])
 
@@ -163,7 +173,6 @@ class ExtFuse(Fuse):
         st.st_atime = 0
         st.st_mtime = 0
         st.st_ctime = 0
-        self.DBG("getattr pe: {0}".format(str(pe)))
         if self.is_root(pathelts=pe):
             return st
         if len(pe)<3:          # ext dir
@@ -217,9 +226,10 @@ class ExtFuse(Fuse):
 
     @debugfunc
     def _readdir(self, path, offset):
-        dirents=['.', '..']
+        dirents=[]
+        yield fuse.Direntry('.') # These are constant.
+        yield fuse.Direntry('..')
         pe=getParts(path)[1:]
-        self.DBG("readdir pe: "+str(pe))
         if self.is_root(path=path):
             # Return extension directories
             query="SELECT DISTINCT ext FROM files;"
@@ -262,24 +272,24 @@ class ExtFuse(Fuse):
 
     @debugfunc
     def mknod(self, path, mode, dev):
-        return 0
+        return -fuse.EROFS
 
     @debugfunc
     def unlink(self, path):
         # RO filesystem
-        return 0
+        return -fuse.EROFS
 
     @debugfunc
     def write(self, path, buf, offset):
-        return 0
+        return -fuse.EROFS
 
     @debugfunc
     def read(self, path, size, offset):
-        return ''               # XXXXXXXXX
+        return ''               # No need, really; it's all symlinks.
 
     @debugfunc
     def mkdir(self, path, mode):
-        return 0
+        return -fuse.EROFS
 
     @debugfunc
     def release(self, path, flags):
@@ -297,14 +307,31 @@ class ExtFuse(Fuse):
     def utime(self, path, times):
         return 0
 
+    @debugfunc
+    def symlink(self, *args):
+        return -fuse.EROFS
+
+    @debugfunc
+    def link(self, *args):
+        return -fuse.EROFS
+
+    @debugfunc
+    def rmdir(self, *args):
+        return -fuse.EROFS
+
+    @debugfunc
+    def chmod(self, *args):
+        return -fuse.EROFS
+
 server=ExtFuse(version="%prog "+fuse.__version__,
                usage='', dash_s_do='setsingle')
 server.path=os.getenv('PWD')
-server.dbfile=os.getenv('HOME')+'/EXTFS.db'
-server.scan='y'
+server.dbfile=None
 server.parser.add_option(mountopt='path')
+server.parser.add_option(mountopt='filelist')
 server.parser.add_option(mountopt='dbfile')
-server.parser.add_option(mountopt='scan')
+server.parser.add_option(mountopt='noscan')
+server.parser.add_option(mountopt='noclean')
 server.parser.add_option(mountopt='verbose')
 server.parser.add_option(mountopt='debug')
 server.parse(errex=1, values=server)

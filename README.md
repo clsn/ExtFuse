@@ -80,13 +80,13 @@ And in fact the directory tree under `/home/me/mnt/` would look like this:
 			README_14.txt -> /path/to/top/first/README.txt
 			info_15.txt -> /path/to/top/first/info.txt
 
-You get the idea.  Each file in the directories is a symbolic link to the real file that it represents.  Note that the fact that there are multiple files with the same name (`README.txt`) is not a problem, and that each file is suffixed with a unique number, after which its extension is tacked on to make handling simpler for programs that look at extensions.  Files with no extension (or empty extensions, i.e. that end in '.') are in the special "`_.`" directory (this cannot be a real extension of any file, as it contains a period), and they have "`._.`" as an extension.  An initial period does not count as delimiting an extension, so "`.gitignore`" winds up with the other "no-extension" files.  If there are multiple periods in a filename, only the last counts for determining the extension (so `.tar.gz` files would get grouped with other `.gz` files.)
+You get the idea.  Each file in the directories is a symbolic link to the real file that it represents.  Note that the fact that there are multiple files with the same name (`README.txt`) is not a problem, and that each file is suffixed with a unique number, after which its extension is tacked on to make handling simpler for programs that look at extensions.  Files with no extension (or empty extensions, i.e. that end in '`.`') are in the special "`_.`" directory (this cannot be a real extension of any file, as it contains a period), and they have "`._.`" as an extension.  An initial period does not count as delimiting an extension, so "`.gitignore`" winds up with the other "no-extension" files.  If there are multiple periods in a filename, only the last counts for determining the extension (so `.tar.gz` files would get grouped with other `.gz` files.)
 
 The filesystem is (currently) read-only and static.  You can change the files through their symlinks, but you can't create new files in the extension file-system, and new files created in the underlying tree are *not* reflected automatically in the extension file-system. You have to unmount and remount.
 
 # How it Works
 
-Upon mounting a directory tree, ExtFs walks through it and visits all the regular files, and stores them in a SQLite database (by default, `$HOME/EXTFS.db`).  Then it simply consults the database to present the directory of extensions and the links as needed.
+Upon mounting a directory tree, ExtFs walks through it and visits all the regular files, and stores them in a SQLite database (by default, a temporary file).  Then it simply consults the database to present the directory of extensions and the links as needed.
 
 Of course, this leads to important limitations and shortcomings. Because the database is never updated, the extension file-system is a static snapshot, as was mentioned above, and does not reflect changes. Also, you have to have someplace to put the database file.  If the tree is large, it may take a little while to build the database and also to access it.  At the moment, ExtFs also writes a debug file in "`DBG`", which can't be completely disabled from the options.
 
@@ -94,17 +94,19 @@ Since it's really just a presentation of the list of files, it shouldn't really 
 
 # Usage and Options
 
-ExtFs works like a normal FUSE module, taking mount options with "`-o`". You need to give it "`-o path=/path/to/root`" to tell it what tree to parse.  You should use a fully-qualified path, or the symbolic links will be relative and will probably point to the wrong place.  You can also specify "`dbfile=/path/DatabaseFile.db`" to move the database file from its default place in `$HOME/EXTFS.db`.  This can be handy if you have a large archive that isn't changing much: you can build the database file once and save it, then use the dbfile option and the "`scan`" option to tell it to use the database file as it is rather than actually walk the tree and rebuild it (use "`scan=n`").
+ExtFs works like a normal FUSE module, taking mount options with "`-o`". You need to give it "`-o path=/path/to/root`" to tell it what tree to parse.  You should use a fully-qualified path, or the symbolic links will be relative and will probably point to the wrong place.  You can also specify "`dbfile=/path/DatabaseFile.db`" to move the database file from its default temporary file.  This can be handy if you have a large archive that isn't changing much: you can build the database file once and save it, then use the dbfile option and the "`noscan`" option to tell it to use the database file as it is rather than actually walk the tree and rebuild it.  You will also need to use the `noclean` option on the first mounting to tell ExtFs not to remove the database file when the extension file-system is unmounted.
+
+If the `dbfile` option is set to a directory, ExtFs will (attempt to) create a temporary file in that directory.  By default, it goes wherever passes for "temporary"; generally `/tmp`.
 
 So you can do
 
-	$ extfs -o path=/big/archive/place,dbfile=/special/DB/place.db /mntpt
+	$ extfs -o path=/big/archive/place,dbfile=/special/DB/place.db,noclean /mntpt
 
 to build the table, and then later use
 
-	$ extfs -o path=/big/archive/place,dbfile=/special/DB/place.db,scan=n /mntpt
+	$ extfs -o path=/big/archive/place,dbfile=/special/DB/place.db,noscan,noclean /mntpt
 
-to mount it without rebuilding the database.  The "`path`" option should not be required here, but it probably is at the moment.
+to mount it without rebuilding the database.
 
 The `verbose` option just prints out a progress line for every 1000 files scanned when building the database.
 
@@ -113,11 +115,8 @@ To unmount, use "`fusermount -u /mount/point`"
 # Bugs and TODO
 
 * Does not handle non-ascii filenames.
-* What about files that start with *two* periods?
+* What about files that start/end with *two* periods? Do we handle those okay?
 * Should be able to handle a file list instead of a tree, in which case the path option is unnecessary.
-* With a default database file, makes it difficult to run two instances at once.
-	* Maybe if the dbfile option is a directory (default `/tmp`), use `tmpnam()` to make a temporary file, and delete it upon unmount by default?
-* Path option should not be necessary if dbfile is given.
 * Lots of cleanup and debug removal.
 * Maybe remove the '`._.`' extension on links.
 * Error handling.
