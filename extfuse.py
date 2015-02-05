@@ -11,6 +11,7 @@ try:
     import sqlite
 except ImportError:
     import sqlite3 as sqlite
+from itertools import count
 
 def debugfunc(f):
     def newf(*args, **kwargs):
@@ -39,6 +40,17 @@ def getParts(path):
     else:
         return path.split(os.sep)
 
+def readZeroes(fh):
+    while True:
+        buf=''
+        ch=fh.read(1)
+        while ch != "\0":
+            if not ch:
+                return
+            buf += ch
+            ch=fh.read(1)
+        yield buf
+
 class ExtFuse(Fuse):
 
     dbg=open("DBG","w")
@@ -63,7 +75,22 @@ class ExtFuse(Fuse):
             pass
 
     def __init__(self, *args, **kw):
+        self.already=False
         Fuse.__init__(self, *args, **kw)
+
+    @debugfunc
+    def recordfile(self, fil):
+        direc, name = fil.rsplit(os.path.sep,1)
+        base, ext = os.path.splitext(name)
+        base=escape_for_sql(base)
+        ext=escape_for_sql(ext)
+        fil=escape_for_sql(fil)
+        if not ext or len(ext)<2:
+            ext='._.'       # Can't possibly be real.
+        ext=ext[1:]
+        cmd=self.insertcommand.format(next(self.counter), fil, base, ext)
+        # print cmd;
+        self.cursor.execute(cmd)
 
     @debugfunc
     def scanfs(self):
@@ -76,19 +103,9 @@ class ExtFuse(Fuse):
         for fil in w:
             if hasattr(self,'debug'):
                 self.DBG("-- walking: {0}".format(fil))
-            direc, name = fil.rsplit(os.path.sep,1)
-            base, ext = os.path.splitext(name)
-            base=escape_for_sql(base)
-            ext=escape_for_sql(ext)
-            fil=escape_for_sql(fil)
-            if not ext or len(ext)<2:
-                ext='._.'       # Can't possibly be real.
-            ext=ext[1:]
-            cmd=self.insertcommand.format(count, fil, base, ext)
-            # print cmd;
-            rv=self.cursor.execute(cmd)
+            self.recordfile(fil)
             count+=1
-            if hasattr(server, 'verbose') and not count%1000:
+            if hasattr(self, 'verbose') and not count%1000:
                 print "... "+str(count)
         self.connection.commit()
         if hasattr(self,'debug'):
@@ -97,7 +114,22 @@ class ExtFuse(Fuse):
                 print repr(l)
         return
 
-    already=False
+    @debugfunc
+    def scanfile(self):
+        self.cursor.execute(self.tablecommand)
+        for cmd in self.indexcommands:
+            self.cursor.execute(cmd)
+        if not self.filelist or self.filelist == '-':
+            inp=sys.stdin
+        else:
+            inp=open(self.filelist,'r')
+        if hasattr(self, 'zeroterm'):
+            inp=readZeroes(inp)
+        for line in inp:
+            self.DBG("Read: ({0})".format(line))
+            self.recordfile(line.strip())
+        self.connection.commit()
+
     @debugfunc
     def fsinit(self):
         # Idempotent!
@@ -129,8 +161,11 @@ class ExtFuse(Fuse):
             exit(50)            # ?
         self.DBG("Opened db file %s"%self.dbfile)
         self.cursor=self.connection.cursor()
+        self.counter=count()
         if hasattr(self,'noscan'):
             return
+        elif hasattr(self,'filelist'):
+            self.scanfile()
         else:
             self.scanfs()
 
@@ -329,6 +364,7 @@ server.path=os.getenv('PWD')
 server.dbfile=None
 server.parser.add_option(mountopt='path')
 server.parser.add_option(mountopt='filelist')
+server.parser.add_option(mountopt='zeroterm')
 server.parser.add_option(mountopt='dbfile')
 server.parser.add_option(mountopt='noscan')
 server.parser.add_option(mountopt='noclean')

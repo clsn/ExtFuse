@@ -33,7 +33,7 @@ Say for example you had a directory tree with the following structure:
 
 After doing
 
-	$ ./extfs -o path=/path/to/top /home/me/mnt
+	$ extfs.py -o path=/path/to/top /home/me/mnt
 	Ready.
 	$ cd /home/me/mnt
 	$ ls -1F
@@ -90,7 +90,13 @@ Upon mounting a directory tree, ExtFs walks through it and visits all the regula
 
 Of course, this leads to important limitations and shortcomings. Because the database is never updated, the extension file-system is a static snapshot, as was mentioned above, and does not reflect changes. Also, you have to have someplace to put the database file.  If the tree is large, it may take a little while to build the database and also to access it.  At the moment, ExtFs also writes a debug file in "`DBG`", which can't be completely disabled from the options.
 
-Since it's really just a presentation of the list of files, it shouldn't really need to walk the tree itself: you ought to be able to give it a list of files you create by other ways (e.g. the `find` command), which can be more discriminating, using exclusion rules and so forth.  This feature has not yet been added, but should be straightforward enough.
+Since it's really just a presentation of the list of files, it isn't necessary for ExtFs to walk the tree itself: you can give it a list of files you create by other ways (e.g. the `find` command), which can be more discriminating, using exclusion rules and so forth, rather than using its simple built-in walker.  Give the name of the file containing the list of files (one per line) as the `filelist` mount option.  If the `filelist` option is given no value, or a value of '`-`', then ExtFs will read from standard input.  If the `zeroterm` mount option is present, the filenames should be terminated by null characters (as might be produced by the `-print0` option of GNU `find`) instead of newlines.  This will let you handle filenames with embedded newlines or trailing whitespace, both of which will fail in an ordinary file list.
+
+So you can do:
+
+	$ find "$PWD" -path "$PWD"/.git -prune -o -type f -print0 | extfs.py -o filelist=-,zeroterm /mnt/point
+
+to skip the `.git` subtree of your current directory, or use multiple invocations of `find` to combine several unrelated trees into a single filelist for mounting.
 
 # Usage and Options
 
@@ -100,11 +106,11 @@ If the `dbfile` option is set to a directory, ExtFs will (attempt to) create a t
 
 So you can do
 
-	$ extfs -o path=/big/archive/place,dbfile=/special/DB/place.db,noclean /mntpt
+	$ extfs.py -o path=/big/archive/place,dbfile=/special/DB/place.db,noclean /mntpt
 
 to build the table, and then later use
 
-	$ extfs -o path=/big/archive/place,dbfile=/special/DB/place.db,noscan,noclean /mntpt
+	$ extfs.py -o path=/big/archive/place,dbfile=/special/DB/place.db,noscan,noclean /mntpt
 
 to mount it without rebuilding the database.
 
@@ -116,8 +122,9 @@ To unmount, use "`fusermount -u /mount/point`"
 
 * Does not handle non-ascii filenames.
 * What about files that start/end with *two* periods? Do we handle those okay?
-* Should be able to handle a file list instead of a tree, in which case the path option is unnecessary.
 * Lots of cleanup and debug removal.
 * Maybe remove the '`._.`' extension on links.
-* Error handling.
+* (Optionally?) stat files upon reading so as to provide correct dates.
+	* Is this really useful?  `ls -lL` does it already.
+* Better error handling.
 * Perhaps eventually use pyinotify to make the filesystem updating.
