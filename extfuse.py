@@ -64,6 +64,11 @@ class ExtFuse(Fuse):
                    """CREATE INDEX Names ON files (newname);"""]
     insertcommand="""INSERT INTO files VALUES ({0}, '{1}', '{2}_{0}', '{3}');"""
 
+    # Dummy extension for the extensionless.  Should contain a period.
+    NULLEXT='_.'
+    # Extended version:
+    ENULLEXT='.'+NULLEXT
+
     @classmethod
     def DBG(cls, s):
         if not cls.DEBUG:
@@ -78,15 +83,23 @@ class ExtFuse(Fuse):
         self.already=False
         Fuse.__init__(self, *args, **kw)
 
+    def namekey(self, path):
+        # Returns the new name, stripping off extension or NULLEXT
+        name=path.rsplit(os.path.sep, 1)[-1]
+        if name[-3:] == self.ENULLEXT: # Probably don't need this check anymore.
+            return name[:-3]
+        namekey, ext=os.path.splitext(name)
+        return namekey
+
     @debugfunc
     def recordfile(self, fil):
-        direc, name = fil.rsplit(os.path.sep,1)
+        name = fil.rsplit(os.path.sep,1)[-1]
         base, ext = os.path.splitext(name)
         base=escape_for_sql(base)
         ext=escape_for_sql(ext)
         fil=escape_for_sql(fil)
         if not ext or len(ext)<2:
-            ext='._.'       # Can't possibly be real.
+            ext=self.ENULLEXT
         ext=ext[1:]
         cmd=self.insertcommand.format(next(self.counter), fil, base, ext)
         # print cmd;
@@ -128,6 +141,7 @@ class ExtFuse(Fuse):
         for line in inp:
             self.DBG("Read: ({0})".format(line))
             self.recordfile(line.strip())
+        inp.close()
         self.connection.commit()
 
     @debugfunc
@@ -195,7 +209,7 @@ class ExtFuse(Fuse):
         return len(pathelts) < 1
 
     @debugfunc
-    def _getattr(self, path):
+    def getattr(self, path):
         st=Stat()
         pe=getParts(path)
         st.st_mode = stat.S_IFDIR | 0555
@@ -224,22 +238,29 @@ class ExtFuse(Fuse):
                 return -fuse.ENOENT
             return st
         else:
-            # st.st_mode=stat.S_IFREG | 0444
             st.st_mode=stat.S_IFLNK | 0777
             st.st_nlink=1
             st.st_size=0
+            newname=self.namekey(pe[-1])
+            # I guess I should search on the name and not _id, so that
+            # using dummy names with real _ids won't work.
+            query="SELECT COUNT(*) FROM files WHERE newname='{0}';".format(escape_for_sql(newname))
+            try:
+                self.DBG(query)
+                self.cursor.execute(query)
+                cnt=self.cursor.fetchone()
+            except Exception as e:
+                self.DBG("Whoa, except: {0}".format(e))
+                cnt=[0]
+            if cnt[0]<1:
+                self.DBG("File not found.")
+                return -fuse.ENOENT
         return st
 
     @debugfunc
     def readlink(self, filename):
-        if filename.endswith('._.'):
-            base,uniq,dmy=filename.rsplit('_',2)
-        else:
-            base, uniq=filename.rsplit('_',1)
-        try:
-            uniq, ext=uniq.rsplit('.',1)
-        except Exception:       # ?
-            pass
+        namekey=self.namekey(filename)
+        base, uniq=namekey.rsplit('_',1)
         if not uniq:
             return -fuse.ENOENT
         try:
@@ -253,14 +274,8 @@ class ExtFuse(Fuse):
             return -fuse.ENOENT
         return str(path[0].encode('utf-8'))
 
-    def getattr(self, *args, **kwargs):
-        try:
-            return self._getattr(*args, **kwargs)
-        except Exception as e:
-            self.DBG("!!!, exception in getattr: {0}".format(str(e)))
-
     @debugfunc
-    def _readdir(self, path, offset):
+    def readdir(self, path, offset):
         dirents=[]
         yield fuse.Direntry('.') # These are constant.
         yield fuse.Direntry('..')
@@ -292,69 +307,53 @@ class ExtFuse(Fuse):
             while l:
 		try:
                    self.DBG("File: {0}".format(str(l)))
-                   yield fuse.Direntry("{0}.{1}".format(l[0],pe[0]))
+                   if pe[0] == self.NULLEXT:
+                       yield fuse.Direntry(str(l[0]))
+                   else:
+                       yield fuse.Direntry("{0}.{1}".format(l[0],pe[0]))
 		except Exception as e:
 		    self.DBG("Whoa, exception: {0}".format(str(e)))
                 l=self.cursor.fetchone()
         else:
             raise StopIteration
 
-    def readdir(self, *args, **kwargs):
-        try:
-            return self._readdir(*args, **kwargs)
-        except Exception as e:
-            self.DBG("!!!, exception in readdir: {0}".format(str(e)))
-
-    @debugfunc
     def mknod(self, path, mode, dev):
         return -fuse.EROFS
 
-    @debugfunc
     def unlink(self, path):
         # RO filesystem
         return -fuse.EROFS
 
-    @debugfunc
     def write(self, path, buf, offset):
         return -fuse.EROFS
 
-    @debugfunc
     def read(self, path, size, offset):
         return ''               # No need, really; it's all symlinks.
 
-    @debugfunc
     def mkdir(self, path, mode):
         return -fuse.EROFS
 
-    @debugfunc
     def release(self, path, flags):
         return 0
 
-    @debugfunc
     def open(self, path, flags):
         return 0
 
-    @debugfunc
     def truncate(self, path, size):
         return 0
 
-    @debugfunc
     def utime(self, path, times):
         return 0
 
-    @debugfunc
     def symlink(self, *args):
         return -fuse.EROFS
 
-    @debugfunc
     def link(self, *args):
         return -fuse.EROFS
 
-    @debugfunc
     def rmdir(self, *args):
         return -fuse.EROFS
 
-    @debugfunc
     def chmod(self, *args):
         return -fuse.EROFS
 

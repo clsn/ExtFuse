@@ -54,8 +54,8 @@ And in fact the directory tree under `/home/me/mnt/` would look like this:
 
 	mnt/
 		_./
-			.gitignore_20._. -> /path/to/top/first/.gitignore
-			Makefile_1._. -> /path/to/top/first/Makefile
+			.gitignore_20 -> /path/to/top/first/.gitignore
+			Makefile_1 -> /path/to/top/first/Makefile
 		c/
 			extralib_2.c -> /path/to/top/second/extralib.c
 			morestuff_3.c -> /path/to/top/second/libs/morestuff.c
@@ -80,7 +80,7 @@ And in fact the directory tree under `/home/me/mnt/` would look like this:
 			README_14.txt -> /path/to/top/first/README.txt
 			info_15.txt -> /path/to/top/first/info.txt
 
-You get the idea.  Each file in the directories is a symbolic link to the real file that it represents.  Note that the fact that there are multiple files with the same name (`README.txt`) is not a problem, and that each file is suffixed with a unique number, after which its extension is tacked on to make handling simpler for programs that look at extensions.  Files with no extension (or empty extensions, i.e. that end in '`.`') are in the special "`_.`" directory (this cannot be a real extension of any file, as it contains a period), and they have "`._.`" as an extension.  An initial period does not count as delimiting an extension, so "`.gitignore`" winds up with the other "no-extension" files.  If there are multiple periods in a filename, only the last counts for determining the extension (so `.tar.gz` files would get grouped with other `.gz` files.)
+You get the idea.  Each file in the directories is a symbolic link to the real file that it represents.  Note that the fact that there are multiple files with the same name (`README.txt`) is not a problem, and that each file is suffixed with a unique number, after which its extension is tacked on to make handling simpler for programs that look at extensions.  Files with no extension (or empty extensions, i.e. that end in '`.`') are in the special "`_.`" directory (this cannot be a real extension of any file, as it contains a period).  An initial period does not count as delimiting an extension, so "`.gitignore`" winds up with the other "no-extension" files.  If there are multiple periods in a filename, only the last counts for determining the extension (so `.tar.gz` files would get grouped with other `.gz` files.)
 
 The filesystem is (currently) read-only and static.  You can change the files through their symlinks, but you can't create new files in the extension file-system, and new files created in the underlying tree are *not* reflected automatically in the extension file-system. You have to unmount and remount.
 
@@ -123,7 +123,6 @@ To unmount, use "`fusermount -u /mount/point`"
 * Does not handle non-ascii filenames.
 * What about files that start/end with *two* periods? Do we handle those okay?
 * Lots of cleanup and debug removal.
-* Maybe remove the '`._.`' extension on links.
 * (Optionally?) stat files upon reading so as to provide correct dates.
 	* Is this really useful?  `ls -lL` does it already.
 * Better error handling.
