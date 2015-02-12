@@ -3,7 +3,7 @@
 
 ## Present Your Archives by Extension
 
-ExtFuse is a FUSE (Filesystem in Userspace) module that presents a directory tree in a different form: by extension, rather than by directory structure.  So you can mount some backup and browse all your `.mp3` files, wherever they may be in the tree, or all the `.txt` files. It's much like some uses of the `find` command, but presented as directories instead of as a list of filenames.
+ExtFuse is a FUSE (Filesystem in Userspace) module that presents a directory tree in a different form: by extension, rather than by directory structure.  So you can mount some backup and browse all your `.mp3` files, wherever they may be in the tree, or all the `.txt` files. It's much like some uses of the `find` command, but presented as directories instead of as a list of filenames (or perhaps like using `**` with bash's `globstar` option, only cached).
 
 ## Example
 
@@ -118,11 +118,17 @@ The `verbose` option just prints out a progress line for every 1000 files scanne
 
 To unmount, use "`fusermount -u /mount/point`"
 
+# Prefix Mode
+
+Once we have the database, we can of course present it any number of ways.  Now you can use "prefix-mode" to view the files by prefix (sort of) instead of by extension.  Give the `prefix` option at mount time, and the behavior is different.  For one thing, `ls /mnt/point/` no longer shows you the list of extension directories.  In fact, it doesn't show you anything at all!  This is on purpose, though not necessarily the best thing to do in this situation.  The subdirectories only exist if you go looking for them.  So if you say `ls /mnt/point/e/`, you will get a list of soft links to all the files whose names begin with "e" (or "E"; SQLite's "LIKE" is case-insensitive, at least by default on my machine.  It apparently depends on certain SQLite extensions).  If you look at `/mnt/point/ex/` you will find links to all the files that begin with "ex", and so forth.  This, too, is a lot like using a * wildcard; `ls /mnt/point/foo/` is a lot like `ls foo*`, only it descends directories.   It would be like `ls **/foo*` with bash `globstar` active, except that it would also catch things at the top level, which the glob would not.
+
 # Bugs and TODO
 
-* Does not handle non-ascii filenames.
+* Does not handle non-ascii filenames, at least not with built-in directory scan.
 * What about files that start/end with *two* periods? Do we handle those okay?
 * Lots of cleanup and debug removal.
+* Control case-(in)sensitivity in SQLite.
+* Other modes/ways to present?  Maybe some better coding for them, better refactoring of things.
 * (Optionally?) stat files upon reading so as to provide correct dates.
 	* Is this really useful?  `ls -lL` does it already.
 * Better error handling.

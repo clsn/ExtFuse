@@ -86,8 +86,6 @@ class ExtFuse(Fuse):
     def namekey(self, path):
         # Returns the new name, stripping off extension or NULLEXT
         name=path.rsplit(os.path.sep, 1)[-1]
-        if name[-3:] == self.ENULLEXT: # Probably don't need this check anymore.
-            return name[:-3]
         namekey, ext=os.path.splitext(name)
         return namekey
 
@@ -151,6 +149,9 @@ class ExtFuse(Fuse):
             return
         self.already=True
         self.multithreaded=False # THIS can make it work!
+        if hasattr(self,'prefix'):
+            self.readdir=self.pre_readdir
+            self.getattr=self.pre_getattr
         try:                     # if dbfile is a dir, make a temp file there.
             st=None
             if self.dbfile:
@@ -357,6 +358,78 @@ class ExtFuse(Fuse):
     def chmod(self, *args):
         return -fuse.EROFS
 
+    def pre_getattr(self, path):
+        st=Stat()
+        pe=getParts(path)
+        st.st_mode = stat.S_IFDIR | 0555
+        st.st_ino = 0
+        st.st_dev = 0
+        st.st_nlink = 2
+        st.st_uid = 0
+        st.st_gid = 0
+        st.st_size = 4096
+        st.st_atime = 0
+        st.st_mtime = 0
+        st.st_ctime = 0
+        if self.is_root(pathelts=pe):
+            return st
+        if len(pe)<3:          # ext dir
+            query="SELECT COUNT(*) FROM files WHERE newname like '{0}%';".format(escape_for_sql(pe[-1]))
+            try:
+                self.DBG(query)
+                self.cursor.execute(query)
+                cnt=self.cursor.fetchone()
+            except Exception as e:
+                self.DBG("Whoa, except: {0}".format(str(e)))
+                cnt=[0]
+            if cnt[0]<1:
+                self.DBG("Nothing returned, ENOENT")
+                return -fuse.ENOENT
+            return st
+        else:
+            st.st_mode=stat.S_IFLNK | 0777
+            st.st_nlink=1
+            st.st_size=0
+            newname=self.namekey(pe[-1])
+            # I guess I should search on the name and not _id, so that
+            # using dummy names with real _ids won't work.
+            query="SELECT COUNT(*) FROM files WHERE newname='{0}';".format(escape_for_sql(newname))
+            try:
+                self.DBG(query)
+                self.cursor.execute(query)
+                cnt=self.cursor.fetchone()
+            except Exception as e:
+                self.DBG("Whoa, except: {0}".format(e))
+                cnt=[0]
+            if cnt[0]<1:
+                self.DBG("File not found.")
+                return -fuse.ENOENT
+        return st
+
+    def pre_readdir(self, path, offset):
+        dirents=[]
+        yield fuse.Direntry('.') # These are constant.
+        yield fuse.Direntry('..')
+        pe=getParts(path)[1:]
+        if self.is_root(path=path):
+            return              # No hints!
+        else:
+            query="SELECT newname, ext FROM files WHERE newname like '{0}%';".format(escape_for_sql(pe[-1]))
+            self.DBG(query)
+            self.cursor.execute(query)
+            l=self.cursor.fetchone()
+            while l:
+		try:
+                   self.DBG("File: {0}".format(str(l)))
+                   if l[1] == self.NULLEXT:
+                       yield fuse.Direntry(str(l[0]))
+                   else:
+                       yield fuse.Direntry("{0}.{1}".format(*l))
+		except Exception as e:
+		    self.DBG("Whoa, exception: {0}".format(str(e)))
+                l=self.cursor.fetchone()
+
+
 server=ExtFuse(version="%prog "+fuse.__version__,
                usage='', dash_s_do='setsingle')
 server.path=os.getenv('PWD')
@@ -369,6 +442,7 @@ server.parser.add_option(mountopt='noscan')
 server.parser.add_option(mountopt='noclean')
 server.parser.add_option(mountopt='verbose')
 server.parser.add_option(mountopt='debug')
+server.parser.add_option(mountopt='prefix')
 server.parse(errex=1, values=server)
 #try:
 server.fsinit()
