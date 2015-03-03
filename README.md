@@ -88,7 +88,7 @@ The filesystem is (currently) read-only and static.  You can change the files th
 
 Upon mounting a directory tree, ExtFs walks through it and visits all the regular files, and stores them in a SQLite database (by default, a temporary file).  Then it simply consults the database to present the directory of extensions and the links as needed.
 
-Of course, this leads to important limitations and shortcomings. Because the database is never updated, the extension file-system is a static snapshot, as was mentioned above, and does not reflect changes. Also, you have to have someplace to put the database file.  If the tree is large, it may take a little while to build the database and also to access it.  At the moment, ExtFs also writes a debug file in "`DBG`", which can't be completely disabled from the options.
+Of course, this leads to important limitations and shortcomings. Because the database is never updated, the extension file-system is a static snapshot, as was mentioned above, and does not reflect changes. Also, you have to have someplace to put the database file.  If the tree is large, it may take a little while to build the database and also to access it.
 
 Since it's really just a presentation of the list of files, it isn't necessary for ExtFs to walk the tree itself: you can give it a list of files you create by other ways (e.g. the `find` command), which can be more discriminating, using exclusion rules and so forth, rather than using its simple built-in walker.  Give the name of the file containing the list of files (one per line) as the `filelist` mount option.  If the `filelist` option is given no value, or a value of '`-`', then ExtFs will read from standard input.  If the `zeroterm` mount option is present, the filenames should be terminated by null characters (as might be produced by the `-print0` option of GNU `find`) instead of newlines.  This will let you handle filenames with embedded newlines or trailing whitespace, both of which will fail in an ordinary file list.
 
@@ -100,7 +100,7 @@ to skip the `.git` subtree of your current directory, or use multiple invocation
 
 # Usage and Options
 
-ExtFs works like a normal FUSE module, taking mount options with "`-o`". You need to give it "`-o path=/path/to/root`" to tell it what tree to parse.  You should use a fully-qualified path, or the symbolic links will be relative and will probably point to the wrong place.  You can also specify "`dbfile=/path/DatabaseFile.db`" to move the database file from its default temporary file.  This can be handy if you have a large archive that isn't changing much: you can build the database file once and save it, then use the dbfile option and the "`noscan`" option to tell it to use the database file as it is rather than actually walk the tree and rebuild it.  You will also need to use the `noclean` option on the first mounting to tell ExtFs not to remove the database file when the extension file-system is unmounted.
+ExtFs works like a normal FUSE module, taking mount options with "`-o`". You need to give it "`-o path=/path/to/root`" to tell it what tree to parse.  You should use a fully-qualified path, or the symbolic links will be relative and will probably point to the wrong place.  You can also specify "`dbfile=/path/DatabaseFile.db`" to move the database file from its default temporary file.  This can be handy if you have a large archive that isn't changing much: you can build the database file once and save it, then use the dbfile option and the "`noscan`" option to tell it to use the database file as it is rather than actually walk the tree and rebuild it.  You will also need to use the `noclean` option when mounting to tell ExtFs not to remove the database file when the extension file-system is unmounted.
 
 If the `dbfile` option is set to a directory, ExtFs will (attempt to) create a temporary file in that directory.  By default, it goes wherever passes for "temporary"; generally `/tmp`.
 
@@ -116,17 +116,31 @@ to mount it without rebuilding the database.
 
 The `verbose` option just prints out a progress line for every 1000 files scanned when building the database.
 
+As an alternative to supplying the `-o path=` option (because I tended to forget this), you can supply the path being read as a non-option argument to extfuse, with the mountpoint being the second (it is possible that this is in fact the only way to scan a path with a comma in its name).  That is, the following two commands are equivalent:
+
+	$ extfs -o path=/etc /mnt/point
+	$ extfs /etc /mnt/point
+
+If there are still other options, they go before the path, as is normal for mount commands:
+
+	$ extfs -o dbfile=/tmp/DB,path=/etc,noclean /mnt/point
+	$ extfs -o dbfile=/tmp/DB,noclean /etc /mnt/point
+
+If the both the `path` option and the command-line argument are present, the command-line argument takes precedence.
+
 To unmount, use "`fusermount -u /mount/point`"
 
 # Prefix Mode
 
-Once we have the database, we can of course present it any number of ways.  Now you can use "prefix-mode" to view the files by prefix (sort of) instead of by extension.  Give the `prefix` option at mount time, and the behavior is different.  For one thing, `ls /mnt/point/` no longer shows you the list of extension directories.  In fact, it doesn't show you anything at all!  This is on purpose, though not necessarily the best thing to do in this situation.  The subdirectories only exist if you go looking for them.  So if you say `ls /mnt/point/e/`, you will get a list of soft links to all the files whose names begin with "e" (or "E"; SQLite's "LIKE" is case-insensitive, at least by default on my machine.  It apparently depends on certain SQLite extensions).  If you look at `/mnt/point/ex/` you will find links to all the files that begin with "ex", and so forth.  This, too, is a lot like using a * wildcard; `ls /mnt/point/foo/` is a lot like `ls foo*`, only it descends directories.   It would be like `ls **/foo*` with bash `globstar` active, except that it would also catch things at the top level, which the glob would not.
+Once we have the database, we can of course present it any number of ways.  Now you can use "prefix-mode" to view the files by prefix (sort of) instead of by extension.  Give the `prefix` option at mount time, and the behavior is different.  Subdirectories mostly exist just if you go looking for them.  If you say `ls /mnt/point/e/`, you will get a list of soft links to all the files whose names begin with "e" (or "E"; SQLite's "LIKE" is case-insensitive, at least by default on my machine.  It apparently depends on certain SQLite extensions).  If you look at `/mnt/point/ex/` you will find links to all the files that begin with "ex", and so forth.  This, too, is a lot like using a * wildcard; `ls /mnt/point/foo/` is a lot like `ls foo*`, only it descends directories.   It would be like `ls **/foo*` with bash `globstar` active, except that it would also catch things at the top level, which the glob would not.
+
+Doing just a simple `ls /mnt/point` in this mode can't show you all the *possible* prefixes you could use, but it does show you all the *one-letter* prefixes that are there, as sort of a starting point (though chances are this will basically wind up being all the alphabet, for a varied file-list).  In order to avoid overloading the reserved `.` and `..` directory entries, you get the *two-letter* prefixes of files that start with a single `.` (the first letter of which is `.`, of course), and the *three-letter* prefixes (the first two being `..`, naturally) of all files that start with `..`.
 
 # Bugs and TODO
 
 * Does not handle non-ascii filenames, at least not with built-in directory scan.
 * What about files that start/end with *two* periods? Do we handle those okay?
-* Lots of cleanup and debug removal.
+* Assorted cleanup.
 * Control case-(in)sensitivity in SQLite.
 * Other modes/ways to present?  Maybe some better coding for them, better refactoring of things.
 * (Optionally?) stat files upon reading so as to provide correct dates.

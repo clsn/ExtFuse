@@ -53,8 +53,8 @@ def readZeroes(fh):
 
 class ExtFuse(Fuse):
 
-    dbg=open("DBG","w")
-    DEBUG=True
+    # dbg=open("DBG","w")
+    DEBUG=False
 
     tablecommand="""CREATE TABLE files (_id int primary key,
 	fullpath varchar(1000) UNIQUE,
@@ -108,6 +108,8 @@ class ExtFuse(Fuse):
         self.cursor.execute(self.tablecommand)
         for cmd in self.indexcommands:
             self.cursor.execute(cmd)
+        if self.cmdline[1]:     # path specified on command line
+            self.path=self.cmdline[1][-1]
         self.pathobj=path.path(self.path)
         count=0
         w=self.pathobj.walkfiles(errors='warn')
@@ -412,7 +414,27 @@ class ExtFuse(Fuse):
         yield fuse.Direntry('..')
         pe=getParts(path)[1:]
         if self.is_root(path=path):
-            return              # No hints!
+            # This is messy, but likely necessary
+            queries=[
+                "SELECT DISTINCT SUBSTR(newname,1,2) from files WHERE newname LIKE '.%';",
+                "SELECT DISTINCT SUBSTR(newname,1,3) from files WHERE newname LIKE '..%';",
+                "SELECT DISTINCT SUBSTR(newname,1,1) from files;",
+            ]
+            for query in queries:
+                self.DBG(query)
+                self.cursor.execute(query)
+                l=self.cursor.fetchone()
+                while l:
+                    self.DBG(str(l))
+                    try:
+                        if l[0]=='.' or l[0]=='..':
+                            l=self.cursor.fetchone()
+                            continue
+                        yield fuse.Direntry(str(l[0]))
+                    except Exception:
+                        self.DBG("Whoa, exception {0}".format(e))
+                    l=self.cursor.fetchone()
+            return
         else:
             query="SELECT newname, ext FROM files WHERE newname like '{0}%';".format(escape_for_sql(pe[-1]))
             self.DBG(query)
